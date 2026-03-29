@@ -1,7 +1,6 @@
-from playwright.async_api import async_playwright
 from datetime import datetime
 import httpx
-import traceback
+import asyncio
 
 CITY_SLUG = {
     "El Hamma": "hamma",
@@ -26,60 +25,40 @@ CITY_SLUG = {
     "Skhira": "skhira",
 }
 
+async def fetch_city(client: httpx.AsyncClient, city: str, slug: str) -> dict:
+    url = f"https://gabeslouages.tn/public/clients_gabes/detail-{slug}.json"
+    try:
+        response = await client.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            total_seats = sum(item.get("placesdispo", 0) for item in data)
+            info_parts = list(set(
+                item.get("ligne", "") for item in data if item.get("ligne")
+            ))
+            info = " / ".join(info_parts[:3]) if info_parts else city
+            return {
+                "city": city,
+                "available_seats": total_seats,
+                "info": info,
+                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "scraped_at": datetime.now().isoformat(),
+                "slug": slug
+            }
+    except Exception as e:
+        print(f"Error fetching {city}: {e}")
+    return None
+
 async def scrape_louages():
     results = []
-
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            print("Browser opened, navigating to site...")
-
-            await page.goto("https://www.gabeslouages.tn/")
-            print("Page loaded, waiting for data...")
-            await page.wait_for_timeout(6000)
-
-            print("Looking for cards...")
-            cards = await page.query_selector_all(".details")
-            print(f"Found {len(cards)} cards")
-
-            for card in cards:
-                try:
-                    city_el = await card.query_selector("h2")
-                    city = (await city_el.inner_text()).strip() if city_el else "Unknown"
-
-                    update_el = await card.query_selector("p")
-                    update_time = (await update_el.inner_text()).strip() if update_el else ""
-
-                    count_el = await card.query_selector(".count")
-                    info = (await count_el.inner_text()).strip() if count_el else ""
-
-                    price_el = await card.query_selector(".price")
-                    seats_text = (await price_el.inner_text()).strip() if price_el else "0"
-                    seats = int(seats_text)
-
-                    results.append({
-                        "city": city,
-                        "available_seats": seats,
-                        "info": info,
-                        "last_update": update_time,
-                        "scraped_at": datetime.now().isoformat(),
-                        "slug": CITY_SLUG.get(city, city.lower())
-                    })
-                    print(f"  Parsed: {city} → {seats} seats")
-
-                except Exception as e:
-                    print(f"Error parsing card: {e}")
-
-            await browser.close()
-            print(f"Done. Total: {len(results)} destinations")
-
-    except Exception as e:
-        print("=== FULL ERROR ===")
-        traceback.print_exc()
-
+    async with httpx.AsyncClient() as client:
+        tasks = [
+            fetch_city(client, city, slug)
+            for city, slug in CITY_SLUG.items()
+        ]
+        responses = await asyncio.gather(*tasks)
+        results = [r for r in responses if r is not None]
+    print(f"Done. {len(results)} destinations loaded.")
     return results
-
 
 async def scrape_detail(city_slug: str):
     url = f"https://gabeslouages.tn/public/clients_gabes/detail-{city_slug}.json"
