@@ -30,7 +30,6 @@ def is_peak_hours():
     return 4 <= hour < 21
 
 async def refresh_data():
-    # Random delay 1-5 seconds to avoid detection
     await asyncio.sleep(random.uniform(1, 5))
     print(f"[{datetime.now()}] Refreshing louage data...")
     try:
@@ -44,10 +43,10 @@ async def smart_scheduler():
     while True:
         await refresh_data()
         if is_peak_hours():
-            interval = 60        # 1 minute during the day
+            interval = 60
             print("Next refresh in 1 minute (peak hours)")
         else:
-            interval = 600       # 10 minutes at night
+            interval = 600
             print("Next refresh in 10 minutes (night hours)")
         await asyncio.sleep(interval)
 
@@ -80,10 +79,18 @@ async def get_city_detail(city: str):
     slug = louage.get("slug", city.lower())
     detail = await scrape_detail(slug)
 
+    # ── Update cache with fresh seat count ──
+    total_seats = sum(item.get("seats", 0) for item in detail)
+    for item in cache["data"]:
+        if item["city"].lower() == city.lower():
+            item["available_seats"] = total_seats
+            item["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            break
+
     return {
         "city": louage["city"],
         "info": louage["info"],
-        "available_seats": louage["available_seats"],
+        "available_seats": total_seats,
         "last_update": louage["last_update"],
         "louages": detail
     }
